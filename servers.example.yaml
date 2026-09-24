@@ -1,10 +1,13 @@
-# Copy to servers.yaml (or ~/.config/ai-sshclient/servers.yaml) and edit.
-# ${VAR} is replaced by the environment variable VAR, keeping secrets out of this file.
+# Copy to servers.yaml (or ~/.config/ai-sshclient/servers.yaml), then chmod 600.
+# ${VAR} is replaced by the environment variable VAR when the server is used,
+# keeping secrets out of this file. A missing variable only breaks that server.
 
 defaults:
   user: deploy
   port: 22
-  timeout: 10
+  timeout: 10              # connect timeout (seconds)
+  host_key_policy: tofu    # tofu (learn on first use) | strict (known_hosts only) | warn
+  max_output: 64000        # bytes kept per stream (head + tail); 0 = unlimited
 
 servers:
   web1:
@@ -12,18 +15,31 @@ servers:
     key_path: ~/.ssh/id_ed25519
     description: Web server
     tags: [web, prod]
+    cwd: /var/www          # default remote working directory
+    env:                   # exported before every command
+      LANG: C.UTF-8
 
   web2:
     host: web2.example.com
     key_path: ~/.ssh/id_ed25519
     key_passphrase: ${WEB_KEY_PASSPHRASE}
     tags: [web, prod]
+    policy:
+      read_only: true      # blocks rm, mv, >, systemctl restart, docker rm... and uploads
+      allow_sudo: false
 
   db:
     host: 10.0.0.5
     user: admin
-    password: ${DB_SSH_PASSWORD}
+    password_command: pass show infra/db-ssh   # first line of stdout is the password
     tags: [db]
+    policy:
+      deny: ['\bdrop\s+(table|database)\b', '\bpg_ctl\b']
+
+  internal:
+    host: 10.10.0.20       # only reachable through web1
+    proxy_jump: web1
+    key_path: ~/.ssh/id_ed25519
 
   lab:
     host: lab.local
