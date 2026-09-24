@@ -1,0 +1,32 @@
+# Copy to servers.yaml (or ~/.config/ai-sshclient/servers.yaml) and edit.
+# ${VAR} is replaced by the environment variable VAR, keeping secrets out of this file.
+
+defaults:
+  user: deploy
+  port: 22
+  timeout: 10
+
+servers:
+  web1:
+    host: 192.168.0.10
+    key_path: ~/.ssh/id_ed25519
+    description: Web server
+    tags: [web, prod]
+
+  web2:
+    host: web2.example.com
+    key_path: ~/.ssh/id_ed25519
+    key_passphrase: ${WEB_KEY_PASSPHRASE}
+    tags: [web, prod]
+
+  db:
+    host: 10.0.0.5
+    user: admin
+    password: ${DB_SSH_PASSWORD}
+    tags: [db]
+
+  lab:
+    host: lab.local
+    port: 2222
+    user: root
+    # no key_path/password: uses ssh-agent or ~/.ssh default keys
