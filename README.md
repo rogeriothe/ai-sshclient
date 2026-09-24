@@ -27,6 +27,11 @@ ai-sshclient run web1 df -h
 ai-sshclient run --sudo db systemctl restart postgresql
 ai-sshclient run --tag prod uptime          # runs in parallel on every server tagged "prod"
 ai-sshclient run --json web1 cat /etc/os-release
+ai-sshclient run -s check.sh web1 arg1 arg2   # runs a local script remotely (no quoting headaches)
+ai-sshclient run -s - web1 <<'EOF'            # or read the script from stdin
+docker ps --format '{{.Names}}'
+EOF
+ai-sshclient run --timeout 30 web1 long-task  # aborts if the command takes longer
 ai-sshclient upload web1 ./app.tar.gz /tmp/app.tar.gz
 ai-sshclient download web1 /var/log/syslog ./syslog
 ```

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import shlex
 import sys
 from concurrent.futures import ThreadPoolExecutor
 
@@ -44,11 +45,17 @@ def cmd_list(manager: SSHManager, args: argparse.Namespace) -> int:
 
 def cmd_run(manager: SSHManager, args: argparse.Namespace) -> int:
     names = _targets(manager, args.server, args.tag)
-    command = " ".join(args.command)
+    script = None
+    if args.script:
+        # Send the script over stdin to a remote shell: no quoting/escaping needed.
+        script = sys.stdin.read() if args.script == "-" else open(args.script).read()
+        command = "bash -s" + (" -- " + shlex.join(args.command) if args.command else "")
+    else:
+        command = " ".join(args.command)
 
     def job(name: str) -> CommandResult:
         try:
-            return manager.run(name, command, timeout=args.timeout, sudo=args.sudo)
+            return manager.run(name, command, timeout=args.timeout, sudo=args.sudo, input=script)
         except Exception as exc:  # report per-server failures without aborting the others
             return CommandResult(name, command, "", f"{type(exc).__name__}: {exc}\n", 255)
 
@@ -83,6 +90,7 @@ def build_parser() -> argparse.ArgumentParser:
     run.add_argument("server", nargs="?", help="server name from the YAML")
     run.add_argument("command", nargs=argparse.REMAINDER, help="command to run")
     run.add_argument("-t", "--tag", help="run on every server with this tag (server positional becomes part of the command)")
+    run.add_argument("-s", "--script", metavar="FILE", help="run a local shell script remotely ('-' reads it from stdin); extra args become $1, $2...")
     run.add_argument("--timeout", type=float, help="command timeout in seconds")
     run.add_argument("--sudo", action="store_true", help="run with sudo, feeding the configured password")
     run.add_argument("--json", action="store_true", help="print one JSON object per server")
@@ -109,7 +117,7 @@ def main(argv: list[str] | None = None) -> int:
         if args.tag and args.server:
             args.command = [args.server, *args.command]
             args.server = None
-        if not args.command:
+        if not args.command and not args.script:
             print("error: no command given", file=sys.stderr)
             return 2
     try:

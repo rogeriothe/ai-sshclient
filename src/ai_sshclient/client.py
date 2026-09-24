@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import time
 from dataclasses import dataclass
 
 import paramiko
@@ -57,7 +58,14 @@ class SSHConnection:
         )
         self._client = client
 
-    def run(self, command: str, timeout: float | None = None, sudo: bool = False) -> CommandResult:
+    def run(
+        self,
+        command: str,
+        timeout: float | None = None,
+        sudo: bool = False,
+        input: str | None = None,
+    ) -> CommandResult:
+        """Run a command. `input` is written to the remote stdin, e.g. a script for `bash -s`."""
         self.connect()
         assert self._client is not None
         if sudo:
@@ -65,12 +73,36 @@ class SSHConnection:
         stdin, stdout, stderr = self._client.exec_command(command, timeout=timeout)
         if sudo and self.server.password:
             stdin.write(self.server.password + "\n")
-            stdin.flush()
+        if input:
+            stdin.write(input)
+        stdin.flush()
         stdin.channel.shutdown_write()
-        out = stdout.read().decode(errors="replace")
-        err = stderr.read().decode(errors="replace")
+        out, err = self._drain(stdout.channel, timeout)
         code = stdout.channel.recv_exit_status()
         return CommandResult(self.server.name, command, out, err, code)
+
+    @staticmethod
+    def _drain(channel: paramiko.Channel, timeout: float | None) -> tuple[str, str]:
+        # Read both streams together: reading stdout to EOF first can deadlock when the
+        # command writes enough stderr to fill the SSH window.
+        out, err = bytearray(), bytearray()
+        deadline = time.monotonic() + timeout if timeout else None
+        while True:
+            idle = True
+            while channel.recv_ready():
+                out += channel.recv(32768)
+                idle = False
+            while channel.recv_stderr_ready():
+                err += channel.recv_stderr(32768)
+                idle = False
+            if channel.exit_status_ready() and not channel.recv_ready() and not channel.recv_stderr_ready():
+                break
+            if deadline and time.monotonic() > deadline:
+                channel.close()
+                raise TimeoutError(f"command did not finish within {timeout}s")
+            if idle:
+                time.sleep(0.02)
+        return out.decode(errors="replace"), err.decode(errors="replace")
 
     def upload(self, local: str | os.PathLike[str], remote: str) -> None:
         self.connect()
@@ -113,9 +145,16 @@ class SSHManager:
     def connect(self, name: str) -> SSHConnection:
         return SSHConnection(self.get(name))
 
-    def run(self, name: str, command: str, timeout: float | None = None, sudo: bool = False) -> CommandResult:
+    def run(
+        self,
+        name: str,
+        command: str,
+        timeout: float | None = None,
+        sudo: bool = False,
+        input: str | None = None,
+    ) -> CommandResult:
         with self.connect(name) as conn:
-            return conn.run(command, timeout=timeout, sudo=sudo)
+            return conn.run(command, timeout=timeout, sudo=sudo, input=input)
 
     def by_tag(self, tag: str) -> list[ServerConfig]:
         return [s for s in self.servers.values() if tag in s.tags]
