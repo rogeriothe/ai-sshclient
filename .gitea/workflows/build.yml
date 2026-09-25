@@ -62,16 +62,30 @@ jobs:
 
       # Requer os secrets REGISTRY_USERNAME / REGISTRY_TOKEN (token com escopo
       # write:package). Settings > Actions > Secrets.
+      #
+      # server_url/repository_owner vêm da expressão (resolvida pelo motor de
+      # Actions), não das env GITHUB_SERVER_URL/GITHUB_REPOSITORY_OWNER do
+      # processo: nesta instância elas apontavam pro endereço interno do
+      # runner (http://gitea:3000) e devolviam 404 na API de pacotes.
       - name: Publicar pacote generico
         env:
           REGISTRY_USERNAME: ${{ secrets.REGISTRY_USERNAME }}
           REGISTRY_TOKEN: ${{ secrets.REGISTRY_TOKEN }}
+          SERVER_URL: ${{ github.server_url }}
+          OWNER: ${{ github.repository_owner }}
         run: |
           set -euo pipefail
           version="${GITHUB_REF_NAME#v}"
-          url="${GITHUB_SERVER_URL}/api/v1/packages/${GITHUB_REPOSITORY_OWNER}/generic/ai-sshclient/${version}/ai-sshclient-x86_64-linux"
+          url="${SERVER_URL}/api/v1/packages/${OWNER}/generic/ai-sshclient/${version}/ai-sshclient-x86_64-linux"
           echo "publicando em ${url}"
-          curl --fail -sS \
+          status=$(curl -sS -o /tmp/publish-response.txt -w "%{http_code}" \
             -u "${REGISTRY_USERNAME}:${REGISTRY_TOKEN}" \
             --upload-file dist/ai-sshclient-x86_64-linux \
-            "${url}"
+            "${url}")
+          echo "status HTTP: ${status}"
+          cat /tmp/publish-response.txt
+          echo
+          if [ "${status}" -lt 200 ] || [ "${status}" -ge 300 ]; then
+            echo "falha ao publicar (status ${status})"
+            exit 1
+          fi
