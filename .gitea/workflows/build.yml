@@ -76,7 +76,7 @@ jobs:
         run: |
           set -euo pipefail
           version="${GITHUB_REF_NAME#v}"
-          url="${SERVER_URL}/api/v1/packages/${OWNER}/generic/ai-sshclient/${version}/ai-sshclient-x86_64-linux"
+          url="${SERVER_URL}/api/packages/${OWNER}/generic/ai-sshclient/${version}/ai-sshclient-x86_64-linux"
           echo "publicando em ${url}"
           status=$(curl -sS -o /tmp/publish-response.txt -w "%{http_code}" \
             -u "${REGISTRY_USERNAME}:${REGISTRY_TOKEN}" \
