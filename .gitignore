@@ -1,13 +1,6 @@
-# Python-generated files
-__pycache__/
-*.py[oc]
-build/
-dist/
-wheels/
-*.egg-info
-
-# Virtual environments
-.venv
-
 # Local server config (may contain secrets)
 servers.yaml
+
+# Rust build output
+/target
+/dist

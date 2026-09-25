@@ -1,0 +1,64 @@
+# Gitea Actions workflow (act_runner). Assumes the instance resolves `owner/repo@ref`
+# actions against github.com (Gitea's documented default). If this instance points
+# DEFAULT_ACTIONS_URL elsewhere, swap the `uses:` targets below to match its mirror.
+name: build
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+    branches: [main]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - run: cargo test -- --test-threads=1
+
+  build:
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-unknown-linux-musl
+      - name: Install musl toolchain
+        run: sudo apt-get update && sudo apt-get install -y musl-tools
+      # Static musl binary: no glibc/OpenSSL dependency, runs on any x86_64 Linux.
+      - name: Build release binary
+        run: make dist
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ai-sshclient-x86_64-linux
+          path: dist/ai-sshclient-x86_64-linux
+
+  # Publishes the binary to this repo's Gitea generic package registry
+  # (Packages tab), one version per tag. Only runs on `vX.Y.Z` tag pushes.
+  #
+  # Requires a repo/org secret GITEA_TOKEN: a Gitea access token with
+  # `write:package` scope. Settings > Actions > Secrets.
+  publish-package:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: ai-sshclient-x86_64-linux
+          path: dist
+      - name: Publish generic package
+        env:
+          GITEA_TOKEN: ${{ secrets.GITEA_TOKEN }}
+        run: |
+          set -euo pipefail
+          version="${GITHUB_REF_NAME#v}"
+          url="${GITHUB_SERVER_URL}/api/v1/packages/${GITHUB_REPOSITORY_OWNER}/generic/ai-sshclient/${version}/ai-sshclient-x86_64-linux"
+          echo "publishing to ${url}"
+          curl --fail -sS \
+            -H "Authorization: token ${GITEA_TOKEN}" \
+            --upload-file dist/ai-sshclient-x86_64-linux \
+            "${url}"

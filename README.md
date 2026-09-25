@@ -2,7 +2,20 @@
 
 SSH wrapper for AI agents (and humans): run commands on remote servers and read their
 output without typing passwords or key paths. Servers live in a YAML file; the agent only
-ever sees server names. Available as an MCP server, a CLI and a Python API.
+ever sees server names. Available as an MCP server and a CLI. Single static binary, no
+runtime dependencies (Rust + russh, no OpenSSL/libssh2).
+
+## Build
+
+```sh
+make build          # cargo build --release (this machine's glibc)
+make dist            # static x86_64-unknown-linux-musl binary in dist/, runs on any x86_64 Linux
+make install          # builds and installs to ~/.local/bin, wires PATH into ~/.bashrc and ~/.zshrc
+make test
+```
+
+`make dist` needs `rustup target add x86_64-unknown-linux-musl` and `musl-tools`
+(`sudo apt install musl-tools`); the target prints these if either is missing.
 
 ## Config
 
@@ -55,7 +68,7 @@ Secrets that appear in command output are also replaced by `***`.
 
 ```sh
 claude mcp add ssh -e CHAVE_SENHA="$CHAVE_SENHA" -- \
-  uv --directory /dados/projetos/ai-sshclient run ai-sshclient mcp
+  /home/you/.local/bin/ai-sshclient mcp
 ```
 
 MCP clients start the server with a minimal environment: pass every variable used by
@@ -90,25 +103,8 @@ ai-sshclient mcp                              # MCP server over stdio
 The exit code is the remote command's exit code (highest one when using `--tag`); 255
 for connection/policy errors.
 
-## Python
-
-```python
-from ai_sshclient import SSHManager
-
-ssh = SSHManager()                      # or SSHManager("path/to/servers.yaml")
-result = ssh.run("web1", "uptime", timeout=30)
-print(result.stdout, result.exit_code, result.ok, result.truncated)
-
-ssh.run_script("web1", "cd /srv\ngit log -1", cwd="/srv")
-ssh.run_many(["web1", "web2"], "uptime")
-
-pooled = SSHManager(keep_alive=True)    # reuse connections across calls
-pooled.run("web1", "whoami"); pooled.run("web1", "ls")
-pooled.close_all()
-```
-
 ## Tests
 
 ```sh
-uv run pytest
+make test            # cargo test -- --test-threads=1 (offline: config, policy, capture, redaction)
 ```
