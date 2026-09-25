@@ -1,7 +1,6 @@
-# Gitea Actions workflow (act_runner). Assumes the instance resolves `owner/repo@ref`
-# actions against github.com (Gitea's documented default). If this instance points
-# DEFAULT_ACTIONS_URL elsewhere, swap the `uses:` targets below to match its mirror.
-name: build
+# Roda os testes, builda o binário estático e publica o pacote genérico no
+# registry do Gitea a cada tag v*.
+name: Publicar pacote
 
 on:
   push:
@@ -9,56 +8,70 @@ on:
     tags: ["v*"]
   pull_request:
     branches: [main]
+  workflow_dispatch:
 
 jobs:
-  test:
+  testes:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-      - run: cargo test -- --test-threads=1
+      - name: Baixar o codigo
+        uses: actions/checkout@v4
+
+      - name: Preparar o Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Rodar os testes
+        run: cargo test -- --test-threads=1
 
   build:
-    needs: test
+    needs: testes
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+      - name: Baixar o codigo
+        uses: actions/checkout@v4
+
+      - name: Preparar o Rust
+        uses: dtolnay/rust-toolchain@stable
         with:
           targets: x86_64-unknown-linux-musl
-      - name: Install musl toolchain
-        run: sudo apt-get update && sudo apt-get install -y musl-tools
-      # Static musl binary: no glibc/OpenSSL dependency, runs on any x86_64 Linux.
-      - name: Build release binary
+
+      - name: Instalar o toolchain musl
+        run: sudo apt-get update && sudo apt-get install --no-install-recommends -y musl-tools
+
+      # Binário estático: sem dependência de glibc/OpenSSL no destino, roda em
+      # qualquer Linux x86_64.
+      - name: Buildar o binario
         run: make dist
-      - uses: actions/upload-artifact@v4
+
+      - name: Guardar o artefato
+        uses: actions/upload-artifact@v4
         with:
           name: ai-sshclient-x86_64-linux
           path: dist/ai-sshclient-x86_64-linux
 
-  # Publishes the binary to this repo's Gitea generic package registry
-  # (Packages tab), one version per tag. Only runs on `vX.Y.Z` tag pushes.
-  #
-  # Requires a repo/org secret GITEA_TOKEN: a Gitea access token with
-  # `write:package` scope. Settings > Actions > Secrets.
-  publish-package:
+  publicar:
     if: startsWith(github.ref, 'refs/tags/v')
     needs: build
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/download-artifact@v4
+      - name: Baixar o artefato
+        uses: actions/download-artifact@v4
         with:
           name: ai-sshclient-x86_64-linux
           path: dist
-      - name: Publish generic package
+
+      # Requer os secrets REGISTRY_USERNAME / REGISTRY_TOKEN (token com escopo
+      # write:package). Settings > Actions > Secrets.
+      - name: Publicar pacote generico
         env:
-          GITEA_TOKEN: ${{ secrets.GITEA_TOKEN }}
+          REGISTRY_USERNAME: ${{ secrets.REGISTRY_USERNAME }}
+          REGISTRY_TOKEN: ${{ secrets.REGISTRY_TOKEN }}
         run: |
           set -euo pipefail
           version="${GITHUB_REF_NAME#v}"
           url="${GITHUB_SERVER_URL}/api/v1/packages/${GITHUB_REPOSITORY_OWNER}/generic/ai-sshclient/${version}/ai-sshclient-x86_64-linux"
-          echo "publishing to ${url}"
+          echo "publicando em ${url}"
           curl --fail -sS \
-            -H "Authorization: token ${GITEA_TOKEN}" \
+            -u "${REGISTRY_USERNAME}:${REGISTRY_TOKEN}" \
             --upload-file dist/ai-sshclient-x86_64-linux \
             "${url}"
