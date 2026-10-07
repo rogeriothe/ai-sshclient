@@ -1,6 +1,7 @@
 //! Thin wrapper over russh that runs commands on configured servers.
 
 pub mod capture;
+pub mod clean;
 pub mod hostkeys;
 
 use std::collections::{BTreeMap, HashMap};
@@ -78,6 +79,8 @@ pub struct RunOptions {
     pub cwd: Option<String>,
     pub env: BTreeMap<String, String>,
     pub max_output: Option<i64>,
+    /// Shrink output for AI agents (see `clean`): quiet env, no ANSI, folded repeats.
+    pub compact: bool,
 }
 
 /// Remote command that runs a script sent over stdin; `args` become $1, $2...
@@ -423,7 +426,15 @@ impl SSHConnection {
         if opts.sudo {
             remote = format!("sudo -S -p '' {remote}");
         }
-        remote = wrap_command(&self.server, &remote, opts.cwd.as_deref(), &opts.env);
+        let mut env = opts.env.clone();
+        if opts.compact {
+            for (k, v) in clean::QUIET_ENV {
+                if !self.server.env.contains_key(*k) && !env.contains_key(*k) {
+                    env.insert(k.to_string(), v.to_string());
+                }
+            }
+        }
+        remote = wrap_command(&self.server, &remote, opts.cwd.as_deref(), &env);
 
         let mut channel = handle.channel_open_session().await?;
         channel.exec(true, remote).await?;
@@ -471,11 +482,16 @@ impl SSHConnection {
         }
 
         let secret_values = secrets.values();
+        let (stdout, stderr) = if opts.compact {
+            (clean::compact(&out.text()), clean::compact(&err.text()))
+        } else {
+            (out.text(), err.text())
+        };
         Ok(CommandResult {
             server: self.server.name.clone(),
             command: command.to_string(),
-            stdout: redact(&out.text(), &secret_values),
-            stderr: redact(&err.text(), &secret_values),
+            stdout: redact(&stdout, &secret_values),
+            stderr: redact(&stderr, &secret_values),
             exit_code: code.unwrap_or(255) as i32,
             duration_s: round3(started.elapsed().as_secs_f64()),
             truncated: out.dropped() > 0 || err.dropped() > 0,

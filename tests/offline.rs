@@ -327,3 +327,24 @@ fn wrap_cwd_and_env() {
     let wrapped = wrap_command(strict, "ls", Some("/opt/my dir"), &env);
     assert_eq!(wrapped, "export X='1 2'; cd '/opt/my dir' && ls");
 }
+
+#[test]
+fn compact_strips_ansi_and_redraws() {
+    use ai_sshclient::client::clean::compact;
+    assert_eq!(compact("\x1b[1;31merror\x1b[0m ok\n"), "error ok\n");
+    assert_eq!(compact("\x1b]0;title\x07done"), "done");
+    assert_eq!(compact("10%\r50%\r100%\nnext\n"), "100%\nnext\n");
+    assert_eq!(compact("dos\r\nline\r\n"), "dos\nline\n");
+}
+
+#[test]
+fn compact_folds_repeated_lines() {
+    use ai_sshclient::client::clean::compact;
+    assert_eq!(compact("a\na\nb\n"), "a\na\nb\n");
+    assert_eq!(
+        compact("x\nx\nx\nx\ny"),
+        "x\n[previous line repeated 3 more times]\ny"
+    );
+    assert_eq!(compact(""), "");
+    assert_eq!(compact("\n\n"), "\n\n");
+}

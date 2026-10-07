@@ -207,6 +207,7 @@ async fn cmd_run(manager: Arc<SSHManager>, args: RunArgs) -> anyhow::Result<i32>
         cwd: args.cwd.clone(),
         env,
         max_output: args.max_output,
+        compact: false,
     };
 
     let results = manager.run_many(&names, &command, opts).await;

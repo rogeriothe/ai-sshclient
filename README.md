@@ -88,8 +88,26 @@ MCP clients start the server with a minimal environment: pass every variable use
 
 Tools: `list_servers`, `run_command` (cwd, env, timeout, sudo, max_output), `run_script`
 (multi-line bash over stdin, with args), `run_on_tag` (parallel), `upload`, `download`.
-Connections are kept open between calls. Results are structured: `stdout`, `stderr`,
-`exit_code`, `duration_s`, `truncated`, `stdout_bytes`, `stderr_bytes`.
+Connections are kept open between calls.
+
+Results are plain text by default, to save agent tokens (no JSON escaping):
+
+```
+exit=0 0.42s truncated (stdout 120000 B, stderr 0 B)
+<stdout>
+--- stderr ---
+<stderr, only when non-empty>
+```
+
+`truncated (...)` appears only when the cap kicked in; `run_on_tag` prefixes each server with
+`=== name exit=N 0.4s ===`. Pass `format: "json"` for a JSON object (`exit_code`,
+`duration_s`, plus `stdout`/`stderr`/`error`/`truncated`/`*_bytes` only when non-empty).
+
+MCP output is also compacted: remote commands get `NO_COLOR=1 TERM=dumb PAGER=cat
+GIT_PAGER=cat SYSTEMD_PAGER=cat SYSTEMD_COLORS=0` (server/call `env` wins), ANSI escapes are
+stripped, `\r`-redrawn lines (progress bars) keep only their final state and 3+ identical
+consecutive lines are folded into one plus `[previous line repeated N more times]`. The CLI
+never does this, so its output stays byte-exact.
 
 ## CLI
 
