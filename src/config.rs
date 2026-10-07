@@ -75,11 +75,13 @@ impl Default for Policy {
 pub struct Secrets {
     pub password: Option<String>,
     pub key_passphrase: Option<String>,
+    pub sudo_password: Option<String>,
+    pub sudo_error: Option<String>,
 }
 
 impl Secrets {
     pub fn values(&self) -> Vec<String> {
-        [&self.password, &self.key_passphrase]
+        [&self.password, &self.key_passphrase, &self.sudo_password]
             .into_iter()
             .flatten()
             .cloned()
@@ -95,6 +97,8 @@ struct RawServer {
     port: Option<u16>,
     password: Option<String>,
     password_command: Option<String>,
+    sudo_password: Option<String>,
+    sudo_password_command: Option<String>,
     key_path: Option<String>,
     key_passphrase: Option<String>,
     passphrase_command: Option<String>,
@@ -110,6 +114,7 @@ struct RawServer {
     description: Option<String>,
     #[serde(default)]
     tags: Vec<String>,
+    log_output: Option<bool>,
 }
 
 
@@ -125,6 +130,14 @@ impl RawServer {
                 .password_command
                 .clone()
                 .or_else(|| self.password_command.clone()),
+            sudo_password: over
+                .sudo_password
+                .clone()
+                .or_else(|| self.sudo_password.clone()),
+            sudo_password_command: over
+                .sudo_password_command
+                .clone()
+                .or_else(|| self.sudo_password_command.clone()),
             key_path: over.key_path.clone().or_else(|| self.key_path.clone()),
             key_passphrase: over
                 .key_passphrase
@@ -161,6 +174,7 @@ impl RawServer {
             } else {
                 over.tags.clone()
             },
+            log_output: over.log_output.or(self.log_output),
         }
     }
 }
@@ -188,6 +202,8 @@ pub struct ServerConfig {
     pub port: u16,
     pub password: Option<String>,
     pub password_command: Option<String>,
+    pub sudo_password: Option<String>,
+    pub sudo_password_command: Option<String>,
     pub key_path: Option<String>,
     pub key_passphrase: Option<String>,
     pub passphrase_command: Option<String>,
@@ -200,6 +216,7 @@ pub struct ServerConfig {
     pub policy: Policy,
     pub description: String,
     pub tags: Vec<String>,
+    pub log_output: bool,
 }
 
 impl std::fmt::Debug for ServerConfig {
@@ -239,9 +256,19 @@ impl ServerConfig {
             self.passphrase_command.as_deref(),
         )
         .map_err(|e| ConfigError::new(format!("server '{}': {}", self.name, e.0)))?;
+        // Deferred: a missing sudo secret must only fail commands that actually use sudo.
+        let (sudo_password, sudo_error) = match resolve_secret(
+            self.sudo_password.as_deref(),
+            self.sudo_password_command.as_deref(),
+        ) {
+            Ok(v) => (v.or_else(|| password.clone()), None),
+            Err(e) => (None, Some(format!("server '{}': {}", self.name, e.0))),
+        };
         Ok(Secrets {
             password,
             key_passphrase,
+            sudo_password,
+            sudo_error,
         })
     }
 
@@ -263,6 +290,7 @@ impl ServerConfig {
                 "deny": self.policy.deny,
                 "allow": self.policy.allow,
             },
+            "log_output": self.log_output,
         })
     }
 }
@@ -407,6 +435,8 @@ pub fn load_config(path: Option<&Path>) -> Result<BTreeMap<String, ServerConfig>
             port: merged.port.unwrap_or(22),
             password: merged.password.clone(),
             password_command: merged.password_command.clone(),
+            sudo_password: merged.sudo_password.clone(),
+            sudo_password_command: merged.sudo_password_command.clone(),
             key_path,
             key_passphrase: merged.key_passphrase.clone(),
             passphrase_command: merged.passphrase_command.clone(),
@@ -419,6 +449,7 @@ pub fn load_config(path: Option<&Path>) -> Result<BTreeMap<String, ServerConfig>
             policy: merged.policy.clone(),
             description: merged.description.clone().unwrap_or_default(),
             tags: merged.tags.clone(),
+            log_output: merged.log_output.unwrap_or(true),
         };
         result.insert(name.clone(), server);
     }

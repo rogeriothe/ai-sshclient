@@ -39,6 +39,7 @@ Copy `servers.example.yaml` to one of these (first match wins) and `chmod 600` i
 | `cwd`, `env` | default remote directory and environment variables |
 | `policy` | `read_only`, `allow_sudo`, `deny: [regex]`, `allow: [regex]` |
 | `description`, `tags` | shown to agents; tags select groups |
+| `log_output` | log this server's full command output (see [Output log](#output-log)), default `true` |
 
 The `defaults` block applies to every server. Secrets are resolved only when a server is
 used, so a missing `${VAR}` breaks only that server. With no `password`/`key_path`,
@@ -63,6 +64,16 @@ command, exit code, duration. Output is never logged and secrets are redacted.
 Change the path with `AI_SSHCLIENT_AUDIT=/path`, disable with `AI_SSHCLIENT_AUDIT=off`.
 
 Secrets that appear in command output are also replaced by `***`.
+
+### Output log
+
+By default every command (and script) run over SSH also has its full `stdout`/`stderr`
+appended as JSON Lines to `~/.local/state/ai-sshclient/commands/<server>.log` — one file per
+server: time, server, source, command, sudo, exit code, duration, stdout, stderr, truncated.
+One JSON object per line, same format as the audit log, secrets redacted the same way. Change
+the directory with `AI_SSHCLIENT_OUTPUT_LOG=/path`, disable it process-wide with
+`AI_SSHCLIENT_OUTPUT_LOG=off`, or disable it for one server (or every server, in `defaults`)
+with `log_output: false` in servers.yaml.
 
 ## MCP server (for AI agents)
 

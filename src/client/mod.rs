@@ -15,6 +15,7 @@ use tokio::sync::Mutex;
 
 use crate::audit;
 use crate::config::{ConfigError, Secrets, ServerConfig, connect_timeout};
+use crate::output_log;
 use crate::policy::{PolicyError, check_command, check_upload};
 use capture::Capture;
 
@@ -366,6 +367,23 @@ impl SSHConnection {
                 entry.insert("duration_s".into(), json!(result.duration_s));
                 entry.insert("truncated".into(), json!(result.truncated));
                 audit::record(entry);
+
+                if self.server.log_output {
+                    let mut out_entry = Map::new();
+                    out_entry.insert("server".into(), json!(self.server.name));
+                    out_entry.insert("source".into(), json!(self.source));
+                    out_entry.insert(
+                        "command".into(),
+                        json!(redact(command, &self.current_secret_values())),
+                    );
+                    out_entry.insert("sudo".into(), json!(opts.sudo));
+                    out_entry.insert("exit_code".into(), json!(result.exit_code));
+                    out_entry.insert("duration_s".into(), json!(result.duration_s));
+                    out_entry.insert("stdout".into(), json!(result.stdout));
+                    out_entry.insert("stderr".into(), json!(result.stderr));
+                    out_entry.insert("truncated".into(), json!(result.truncated));
+                    output_log::record(&self.server.name, out_entry);
+                }
                 Ok(result)
             }
             Err(e) => {
@@ -397,6 +415,10 @@ impl SSHConnection {
             .clone()
             .ok_or_else(|| anyhow!("secrets not resolved"))?;
 
+        if opts.sudo
+            && let Some(e) = &secrets.sudo_error {
+                bail!("{e}");
+            }
         let mut remote = command.to_string();
         if opts.sudo {
             remote = format!("sudo -S -p '' {remote}");
@@ -407,7 +429,7 @@ impl SSHConnection {
         channel.exec(true, remote).await?;
 
         if opts.sudo
-            && let Some(pw) = &secrets.password {
+            && let Some(pw) = &secrets.sudo_password {
                 channel.data(format!("{pw}\n").as_bytes()).await?;
             }
         if let Some(input) = &opts.input {

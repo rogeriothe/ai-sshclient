@@ -8,6 +8,7 @@ defaults:
   timeout: 10              # connect timeout (seconds)
   host_key_policy: tofu    # tofu (learn on first use) | strict (known_hosts only) | warn
   max_output: 64000        # bytes kept per stream (head + tail); 0 = unlimited
+  # log_output: false      # uncomment to stop logging full command output for every server
 
 servers:
   web1:
@@ -35,6 +36,7 @@ servers:
     tags: [db]
     policy:
       deny: ['\bdrop\s+(table|database)\b', '\bpg_ctl\b']
+    log_output: false      # don't log this server's command output (e.g. it prints secrets)
 
   internal:
     host: 10.10.0.20       # only reachable through web1

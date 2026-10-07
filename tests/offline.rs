@@ -233,6 +233,47 @@ fn audit_can_be_disabled() {
 }
 
 #[test]
+fn log_output_defaults_to_true() {
+    let (config_path, _audit) = setup(BASE_YAML);
+    let servers = load_config(Some(&config_path)).unwrap();
+    assert!(servers["web"].log_output);
+}
+
+#[test]
+fn log_output_can_be_disabled_per_server() {
+    let dir = unique_dir();
+    let config_path = dir.join("servers.yaml");
+    std::fs::write(
+        &config_path,
+        r#"
+servers:
+  quiet:
+    host: 10.0.0.9
+    user: x
+    log_output: false
+  loud:
+    host: 10.0.0.9
+    user: x
+"#,
+    )
+    .unwrap();
+    let servers = load_config(Some(&config_path)).unwrap();
+    assert!(!servers["quiet"].log_output);
+    assert!(servers["loud"].log_output);
+}
+
+#[test]
+fn output_log_can_be_disabled_via_env() {
+    unsafe {
+        std::env::set_var("AI_SSHCLIENT_OUTPUT_LOG", "off");
+    }
+    assert!(ai_sshclient::output_log::output_log_dir().is_none());
+    unsafe {
+        std::env::remove_var("AI_SSHCLIENT_OUTPUT_LOG");
+    }
+}
+
+#[test]
 fn capture_keeps_head_and_tail() {
     let mut cap = Capture::new(10);
     for chunk in [
