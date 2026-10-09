@@ -1,10 +1,11 @@
 //! Tests that need no network: config loading, policy, output capture, redaction.
-//! Port of `tests/test_offline.py`. Run with `cargo test -- --test-threads=1`
-//! (several tests mutate process-wide env vars).
+//! Port of `tests/test_offline.py`. Tests that touch process-wide env vars hold
+//! `env_lock()` so they can run in parallel with the rest.
 
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::{Mutex, MutexGuard};
 
 use ai_sshclient::client::{
     RunOptions, SSHConnection, SSHManager, capture::Capture, redact, script_command, sudo_command,
@@ -54,9 +55,17 @@ fn unique_dir() -> PathBuf {
     dir
 }
 
+/// Serializes tests that set or read process-wide env vars.
+fn env_lock() -> MutexGuard<'static, ()> {
+    static ENV_LOCK: Mutex<()> = Mutex::new(());
+    ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner())
+}
+
 /// Writes `yaml` as `servers.yaml` in a fresh temp dir and points `AI_SSHCLIENT_AUDIT` at a
-/// fresh `audit.log` next to it. Returns (config_path, audit_path).
-fn setup(yaml: &str) -> (PathBuf, PathBuf) {
+/// fresh `audit.log` next to it. Returns (config_path, audit_path, env guard); keep the guard
+/// alive while the test depends on that env.
+fn setup(yaml: &str) -> (PathBuf, PathBuf, MutexGuard<'static, ()>) {
+    let env = env_lock();
     let dir = unique_dir();
     let config_path = dir.join("servers.yaml");
     std::fs::write(&config_path, yaml).unwrap();
@@ -64,15 +73,15 @@ fn setup(yaml: &str) -> (PathBuf, PathBuf) {
     unsafe {
         std::env::set_var("AI_SSHCLIENT_AUDIT", &audit_path);
     }
-    (config_path, audit_path)
+    (config_path, audit_path, env)
 }
 
 #[test]
 fn missing_env_var_only_fails_the_server_that_uses_it() {
+    let (config_path, _audit, _env) = setup(BASE_YAML);
     unsafe {
         std::env::remove_var("MISSING_VAR_FOR_TEST");
     }
-    let (config_path, _audit) = setup(BASE_YAML);
     let servers = load_config(Some(&config_path)).unwrap();
     let mut names: Vec<&str> = servers.keys().map(|s| s.as_str()).collect();
     names.sort();
@@ -85,7 +94,7 @@ fn missing_env_var_only_fails_the_server_that_uses_it() {
 
 #[test]
 fn password_command_and_repr_hides_secrets() {
-    let (config_path, _audit) = setup(BASE_YAML);
+    let (config_path, _audit, _env) = setup(BASE_YAML);
     let servers = load_config(Some(&config_path)).unwrap();
     let ro = &servers["ro"];
 
@@ -103,6 +112,7 @@ fn password_command_and_repr_hides_secrets() {
 
 #[test]
 fn proxy_jump_validation_and_loop() {
+    let _env = env_lock();
     let dir = unique_dir();
     unsafe {
         std::env::set_var("AI_SSHCLIENT_AUDIT", dir.join("audit.log"));
@@ -130,7 +140,8 @@ fn proxy_jump_validation_and_loop() {
 
 #[tokio::test]
 async fn jump_chain() {
-    let (config_path, _audit) = setup(BASE_YAML);
+    let (config_path, _audit, env) = setup(BASE_YAML);
+    drop(env); // no env needed past setup; don't hold the guard across awaits
     let manager = SSHManager::new(Some(&config_path), false, "test").unwrap();
     let conn = manager.connect("inner").unwrap();
     let guard = conn.lock().await;
@@ -140,7 +151,7 @@ async fn jump_chain() {
 
 #[test]
 fn read_only_blocks_writes() {
-    let (config_path, _audit) = setup(BASE_YAML);
+    let (config_path, _audit, _env) = setup(BASE_YAML);
     let servers = load_config(Some(&config_path)).unwrap();
     let ro = &servers["ro"];
     for command in [
@@ -157,7 +168,7 @@ fn read_only_blocks_writes() {
 
 #[test]
 fn read_only_allows_reads() {
-    let (config_path, _audit) = setup(BASE_YAML);
+    let (config_path, _audit, _env) = setup(BASE_YAML);
     let servers = load_config(Some(&config_path)).unwrap();
     let ro = &servers["ro"];
     for command in [
@@ -173,7 +184,7 @@ fn read_only_allows_reads() {
 
 #[test]
 fn sudo_policy_and_upload() {
-    let (config_path, _audit) = setup(BASE_YAML);
+    let (config_path, _audit, _env) = setup(BASE_YAML);
     let servers = load_config(Some(&config_path)).unwrap();
     let ro = &servers["ro"];
 
@@ -188,7 +199,7 @@ fn sudo_policy_and_upload() {
 
 #[test]
 fn allow_and_deny() {
-    let (config_path, _audit) = setup(BASE_YAML);
+    let (config_path, _audit, _env) = setup(BASE_YAML);
     let servers = load_config(Some(&config_path)).unwrap();
     let strict = &servers["strict"];
 
@@ -201,16 +212,20 @@ fn allow_and_deny() {
     assert!(err.0.contains("denied"), "{}", err.0);
 }
 
-#[tokio::test]
-async fn blocked_command_is_audited() {
-    let (config_path, audit_path) = setup(BASE_YAML);
+#[test]
+fn blocked_command_is_audited() {
+    let (config_path, audit_path, _env) = setup(BASE_YAML);
     let servers = load_config(Some(&config_path)).unwrap();
     let ro = servers["ro"].clone();
 
     let mut conn = SSHConnection::new(ro, None, "test".to_string());
-    let err = conn
-        .run("rm -rf /", &RunOptions::default())
-        .await
+    // Sync test driving its own runtime, so the env guard is never held across an await.
+    let rt = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    let err = rt
+        .block_on(conn.run("rm -rf /", &RunOptions::default()))
         .unwrap_err();
     assert!(err.to_string().contains("read_only"), "{err}");
 
@@ -224,6 +239,7 @@ async fn blocked_command_is_audited() {
 
 #[test]
 fn audit_can_be_disabled() {
+    let _env = env_lock();
     unsafe {
         std::env::set_var("AI_SSHCLIENT_AUDIT", "off");
     }
@@ -235,7 +251,7 @@ fn audit_can_be_disabled() {
 
 #[test]
 fn log_output_defaults_to_true() {
-    let (config_path, _audit) = setup(BASE_YAML);
+    let (config_path, _audit, _env) = setup(BASE_YAML);
     let servers = load_config(Some(&config_path)).unwrap();
     assert!(servers["web"].log_output);
 }
@@ -265,6 +281,7 @@ servers:
 
 #[test]
 fn output_log_can_be_disabled_via_env() {
+    let _env = env_lock();
     unsafe {
         std::env::set_var("AI_SSHCLIENT_OUTPUT_LOG", "off");
     }
@@ -320,7 +337,7 @@ fn redact_and_script_command() {
 
 #[test]
 fn wrap_cwd_and_env() {
-    let (config_path, _audit) = setup(BASE_YAML);
+    let (config_path, _audit, _env) = setup(BASE_YAML);
     let servers = load_config(Some(&config_path)).unwrap();
     let strict = &servers["strict"];
     let mut env = BTreeMap::new();
