@@ -92,6 +92,12 @@ pub fn script_command(args: &[String]) -> String {
     }
 }
 
+/// Run the whole command line as root: a bare `sudo` prefix would only cover
+/// its first simple command (`sudo a && b` runs `b` unprivileged).
+pub fn sudo_command(command: &str) -> String {
+    format!("sudo -S -p '' sh -c {}", shell_words::quote(command))
+}
+
 pub fn redact(text: &str, secrets: &[String]) -> String {
     let mut text = text.to_string();
     for secret in secrets {
@@ -422,10 +428,6 @@ impl SSHConnection {
             && let Some(e) = &secrets.sudo_error {
                 bail!("{e}");
             }
-        let mut remote = command.to_string();
-        if opts.sudo {
-            remote = format!("sudo -S -p '' {remote}");
-        }
         let mut env = opts.env.clone();
         if opts.compact {
             for (k, v) in clean::QUIET_ENV {
@@ -434,7 +436,10 @@ impl SSHConnection {
                 }
             }
         }
-        remote = wrap_command(&self.server, &remote, opts.cwd.as_deref(), &env);
+        let mut remote = wrap_command(&self.server, command, opts.cwd.as_deref(), &env);
+        if opts.sudo {
+            remote = sudo_command(&remote);
+        }
 
         let mut channel = handle.channel_open_session().await?;
         channel.exec(true, remote).await?;

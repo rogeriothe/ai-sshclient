@@ -7,7 +7,8 @@ use std::path::PathBuf;
 use std::sync::atomic::{AtomicU32, Ordering};
 
 use ai_sshclient::client::{
-    RunOptions, SSHConnection, SSHManager, capture::Capture, redact, script_command, wrap_command,
+    RunOptions, SSHConnection, SSHManager, capture::Capture, redact, script_command, sudo_command,
+    wrap_command,
 };
 use ai_sshclient::config::load_config;
 use ai_sshclient::policy::{check_command, check_upload};
@@ -326,6 +327,18 @@ fn wrap_cwd_and_env() {
     env.insert("X".to_string(), "1 2".to_string());
     let wrapped = wrap_command(strict, "ls", Some("/opt/my dir"), &env);
     assert_eq!(wrapped, "export X='1 2'; cd '/opt/my dir' && ls");
+}
+
+#[test]
+fn sudo_covers_whole_command_line() {
+    assert_eq!(
+        sudo_command("apt-get update && apt-get upgrade -y"),
+        "sudo -S -p '' sh -c 'apt-get update && apt-get upgrade -y'"
+    );
+    assert_eq!(
+        sudo_command("export X='1 2'; cd /tmp && ls"),
+        "sudo -S -p '' sh -c 'export X='\\''1 2'\\''; cd /tmp && ls'"
+    );
 }
 
 #[test]
