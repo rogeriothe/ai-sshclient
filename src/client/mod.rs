@@ -161,6 +161,18 @@ impl russh::client::Handler for ClientHandler {
     }
 }
 
+/// RSA signature hash to use. Servers that do not send `server-sig-algs`
+/// (RFC 8308) still accept rsa-sha2-256; legacy ssh-rsa (SHA-1) is used only
+/// when the server explicitly advertises it as its sole RSA option.
+async fn rsa_hash(
+    handle: &russh::client::Handle<ClientHandler>,
+) -> Result<Option<russh::keys::HashAlg>, russh::Error> {
+    Ok(handle
+        .best_supported_rsa_hash()
+        .await?
+        .unwrap_or(Some(russh::keys::HashAlg::Sha256)))
+}
+
 async fn authenticate(
     handle: &mut russh::client::Handle<ClientHandler>,
     server: &ServerConfig,
@@ -169,7 +181,7 @@ async fn authenticate(
     if let Some(key_path) = &server.key_path {
         let key = russh::keys::load_secret_key(key_path, secrets.key_passphrase.as_deref())
             .map_err(|e| anyhow!("failed to load key {key_path}: {e}"))?;
-        let hash_alg = handle.best_supported_rsa_hash().await?.flatten();
+        let hash_alg = rsa_hash(handle).await?;
         let res = handle
             .authenticate_publickey(
                 server.user.clone(),
@@ -200,7 +212,7 @@ async fn authenticate(
         && let Ok(identities) = agent.request_identities().await {
             for identity in identities {
                 if let russh::keys::agent::AgentIdentity::PublicKey { key, .. } = identity {
-                    let hash_alg = handle.best_supported_rsa_hash().await?.flatten();
+                    let hash_alg = rsa_hash(handle).await?;
                     if let Ok(res) = handle
                         .authenticate_publickey_with(server.user.clone(), key, hash_alg, &mut agent)
                         .await
@@ -220,7 +232,7 @@ async fn authenticate(
             continue;
         }
         if let Ok(key) = russh::keys::load_secret_key(&path, None) {
-            let hash_alg = handle.best_supported_rsa_hash().await?.flatten();
+            let hash_alg = rsa_hash(handle).await?;
             if let Ok(res) = handle
                 .authenticate_publickey(
                     server.user.clone(),
