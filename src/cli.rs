@@ -47,6 +47,9 @@ pub enum Action {
         remote: String,
         local: PathBuf,
     },
+    /// import a server from ~/.ssh/config into servers.yaml
+    #[command(alias = "import-ssh", alias = "add")]
+    Import(crate::ssh_config::ImportArgs),
     /// run as an MCP server over stdio (for AI agents)
     Mcp,
 }
@@ -243,6 +246,19 @@ pub async fn run() -> i32 {
         };
     }
 
+    if let Action::Import(mut args) = cli.action {
+        if args.out.is_none() && cli.config.is_some() {
+            args.out = cli.config;
+        }
+        return match crate::ssh_config::import_server(args) {
+            Ok(()) => 0,
+            Err(e) => {
+                eprintln!("error: {e}");
+                2
+            }
+        };
+    }
+
     let mut action = cli.action;
     if let Action::Run(ref mut args) = action {
         if args.tag.is_some() && args.server.is_some() {
@@ -286,6 +302,6 @@ pub async fn run() -> i32 {
             Ok(()) => 0,
             Err(e) => map_error(e),
         },
-        Action::Mcp => unreachable!("handled above"),
+        Action::Mcp | Action::Import(_) => unreachable!("handled above"),
     }
 }

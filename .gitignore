@@ -4,3 +4,9 @@ servers.yaml
 # Rust build output
 /target
 /dist
+
+# Python bytecode
+__pycache__/
+
+# Local scratch data
+/tmp/

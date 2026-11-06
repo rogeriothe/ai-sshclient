@@ -378,3 +378,201 @@ fn compact_folds_repeated_lines() {
     assert_eq!(compact(""), "");
     assert_eq!(compact("\n\n"), "\n\n");
 }
+
+#[test]
+fn import_creates_new_yaml_if_not_exists() {
+    let dir = unique_dir();
+    let ssh_config = dir.join("ssh_config");
+    let out_yaml = dir.join("servers.yaml");
+
+    std::fs::write(
+        &ssh_config,
+        "Host myserver\n  HostName 10.20.30.40\n  User testuser\n  Port 2222\n  IdentityFile ~/.ssh/testkey\n",
+    )
+    .unwrap();
+
+    let args = ai_sshclient::ssh_config::ImportArgs {
+        server: "myserver".to_string(),
+        name: None,
+        ssh_config: Some(ssh_config),
+        out: Some(out_yaml.clone()),
+        overwrite: false,
+        host: None,
+        user: None,
+        port: None,
+        description: None,
+    };
+
+    ai_sshclient::ssh_config::import_server(args).unwrap();
+
+    assert!(out_yaml.exists());
+    let loaded = load_config(Some(&out_yaml)).unwrap();
+    let s = &loaded["myserver"];
+    assert_eq!(s.host, "10.20.30.40");
+    assert_eq!(s.user, "testuser");
+    assert_eq!(s.port, 2222);
+}
+
+#[test]
+fn import_appends_to_existing_yaml_preserving_content() {
+    let dir = unique_dir();
+    let ssh_config = dir.join("ssh_config");
+    let out_yaml = dir.join("servers.yaml");
+
+    let initial = "# Initial comment to preserve\n\ndefaults:\n  port: 22\n\nservers:\n  existing:\n    host: 1.1.1.1\n    user: u1\n";
+    std::fs::write(&out_yaml, initial).unwrap();
+
+    std::fs::write(
+        &ssh_config,
+        "Host newserver\n  HostName 2.2.2.2\n  User u2\n",
+    )
+    .unwrap();
+
+    let args = ai_sshclient::ssh_config::ImportArgs {
+        server: "newserver".to_string(),
+        name: None,
+        ssh_config: Some(ssh_config),
+        out: Some(out_yaml.clone()),
+        overwrite: false,
+        host: None,
+        user: None,
+        port: None,
+        description: None,
+    };
+
+    ai_sshclient::ssh_config::import_server(args).unwrap();
+
+    let content = std::fs::read_to_string(&out_yaml).unwrap();
+    assert!(content.contains("# Initial comment to preserve"));
+    assert!(content.contains("existing:"));
+    assert!(content.contains("newserver:"));
+
+    let loaded = load_config(Some(&out_yaml)).unwrap();
+    assert_eq!(loaded.len(), 2);
+    assert_eq!(loaded["existing"].host, "1.1.1.1");
+    assert_eq!(loaded["newserver"].host, "2.2.2.2");
+}
+
+#[test]
+fn import_duplicate_errors_without_overwrite_and_succeeds_with_overwrite() {
+    let dir = unique_dir();
+    let ssh_config = dir.join("ssh_config");
+    let out_yaml = dir.join("servers.yaml");
+
+    let initial = "servers:\n  myserver:\n    host: 1.1.1.1\n    user: olduser\n";
+    std::fs::write(&out_yaml, initial).unwrap();
+
+    std::fs::write(
+        &ssh_config,
+        "Host myserver\n  HostName 1.1.1.1\n  User newuser\n",
+    )
+    .unwrap();
+
+    let args = ai_sshclient::ssh_config::ImportArgs {
+        server: "myserver".to_string(),
+        name: None,
+        ssh_config: Some(ssh_config.clone()),
+        out: Some(out_yaml.clone()),
+        overwrite: false,
+        host: None,
+        user: None,
+        port: None,
+        description: None,
+    };
+
+    let err = ai_sshclient::ssh_config::import_server(args).unwrap_err();
+    assert!(err.to_string().contains("already exists"));
+
+    // Now with overwrite
+    let args_overwrite = ai_sshclient::ssh_config::ImportArgs {
+        server: "myserver".to_string(),
+        name: None,
+        ssh_config: Some(ssh_config),
+        out: Some(out_yaml.clone()),
+        overwrite: true,
+        host: None,
+        user: None,
+        port: None,
+        description: None,
+    };
+
+    ai_sshclient::ssh_config::import_server(args_overwrite).unwrap();
+    let loaded = load_config(Some(&out_yaml)).unwrap();
+    assert_eq!(loaded["myserver"].user, "newuser");
+}
+
+#[test]
+fn import_resolves_proxy_jump_to_existing_server() {
+    let dir = unique_dir();
+    let ssh_config = dir.join("ssh_config");
+    let out_yaml = dir.join("servers.yaml");
+
+    let initial = "servers:\n  my-bastion:\n    host: 192.168.100.1\n    user: admin\n";
+    std::fs::write(&out_yaml, initial).unwrap();
+
+    std::fs::write(
+        &ssh_config,
+        "Host internal-srv\n  HostName 10.0.0.99\n  User app\n  ProxyJump admin@192.168.100.1\n",
+    )
+    .unwrap();
+
+    let args = ai_sshclient::ssh_config::ImportArgs {
+        server: "internal-srv".to_string(),
+        name: None,
+        ssh_config: Some(ssh_config),
+        out: Some(out_yaml.clone()),
+        overwrite: false,
+        host: None,
+        user: None,
+        port: None,
+        description: None,
+    };
+
+    ai_sshclient::ssh_config::import_server(args).unwrap();
+    let loaded = load_config(Some(&out_yaml)).unwrap();
+    assert_eq!(loaded["internal-srv"].proxy_jump.as_deref(), Some("my-bastion"));
+}
+
+#[cfg(unix)]
+#[test]
+fn import_makes_servers_yaml_private_on_every_write() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let dir = unique_dir();
+    let ssh_config = dir.join("ssh_config");
+    let out_yaml = dir.join("servers.yaml");
+    let mode = |path: &std::path::Path| {
+        std::fs::metadata(path).unwrap().permissions().mode() & 0o777
+    };
+
+    std::fs::write(&ssh_config, "Host a\n  HostName 1.1.1.1\n  User u\nHost b\n  HostName 2.2.2.2\n  User u\n").unwrap();
+    let import = |server: &str, overwrite: bool| {
+        ai_sshclient::ssh_config::import_server(ai_sshclient::ssh_config::ImportArgs {
+            server: server.to_string(),
+            name: None,
+            ssh_config: Some(ssh_config.clone()),
+            out: Some(out_yaml.clone()),
+            overwrite,
+            host: None,
+            user: None,
+            port: None,
+            description: None,
+        })
+        .unwrap();
+    };
+
+    import("a", false);
+    assert_eq!(mode(&out_yaml), 0o600, "new file");
+
+    std::fs::set_permissions(&out_yaml, std::fs::Permissions::from_mode(0o644)).unwrap();
+    import("b", false);
+    assert_eq!(mode(&out_yaml), 0o600, "append");
+
+    std::fs::set_permissions(&out_yaml, std::fs::Permissions::from_mode(0o644)).unwrap();
+    import("b", true);
+    assert_eq!(mode(&out_yaml), 0o600, "overwrite");
+
+    let loaded = load_config(Some(&out_yaml)).unwrap();
+    assert_eq!(loaded["a"].host, "1.1.1.1");
+    assert_eq!(loaded["b"].host, "2.2.2.2");
+}
