@@ -60,4 +60,15 @@ pub fn record(entry: Map<String, Value>) {
             let _ = writeln!(file, "{line}");
         }
     }
+    // Windows: files under the user profile are private by default ACLs.
+    #[cfg(not(unix))]
+    {
+        let file = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&path);
+        if let Ok(mut file) = file {
+            let _ = writeln!(file, "{line}");
+        }
+    }
 }

@@ -61,6 +61,17 @@ fn append_entry(host: &str, algo: &str, b64: &str) {
             let _ = writeln!(file, "{host} {algo} {b64}");
         }
     }
+    // Windows: files under the user profile are private by default ACLs.
+    #[cfg(not(unix))]
+    {
+        if let Ok(mut file) = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&path)
+        {
+            let _ = writeln!(file, "{host} {algo} {b64}");
+        }
+    }
 }
 
 /// `true` = accept, `false` = reject. `policy` is `tofu` | `strict` | `warn`.
