@@ -135,6 +135,7 @@ jobs:
           TAG: ${{ github.ref_name }}
         run: |
           cd dist
-          sha256sum * > SHA256SUMS
+          mv ai-sshclient.exe ai-sshclient-x86_64-windows.exe
+          sha256sum ai-sshclient-* > SHA256SUMS
           gh release create "$TAG" --repo "$GITHUB_REPOSITORY" \
             --title "$TAG" --generate-notes ai-sshclient-* SHA256SUMS

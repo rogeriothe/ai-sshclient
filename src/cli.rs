@@ -15,7 +15,8 @@ use crate::policy::PolicyError;
 #[command(
     name = "ai-sshclient",
     about = "Run commands on servers defined in a YAML file.",
-    disable_help_subcommand = true
+    disable_help_subcommand = true,
+    version
 )]
 pub struct Cli {
     /// path to servers YAML (default: $AI_SSHCLIENT_CONFIG, ./servers.yaml, ~/.config/ai-sshclient/servers.yaml)
@@ -52,6 +53,12 @@ pub enum Action {
     Import(crate::ssh_config::ImportArgs),
     /// run as an MCP server over stdio (for AI agents)
     Mcp,
+    /// check for a newer GitHub release and install it
+    Update {
+        /// only report whether a newer version exists
+        #[arg(long)]
+        check: bool,
+    },
 }
 
 #[derive(Args)]
@@ -246,6 +253,22 @@ pub async fn run() -> i32 {
         };
     }
 
+    if let Action::Update { check } = cli.action {
+        // Blocking HTTP: keep it off the async runtime threads.
+        let res = tokio::task::spawn_blocking(move || crate::update::run(check)).await;
+        return match res {
+            Ok(Ok(())) => 0,
+            Ok(Err(e)) => {
+                eprintln!("error: {e:#}");
+                1
+            }
+            Err(e) => {
+                eprintln!("error: {e}");
+                1
+            }
+        };
+    }
+
     if let Action::Import(mut args) = cli.action {
         if args.out.is_none() && cli.config.is_some() {
             args.out = cli.config;
@@ -302,6 +325,6 @@ pub async fn run() -> i32 {
             Ok(()) => 0,
             Err(e) => map_error(e),
         },
-        Action::Mcp | Action::Import(_) => unreachable!("handled above"),
+        Action::Mcp | Action::Import(_) | Action::Update { .. } => unreachable!("handled above"),
     }
 }

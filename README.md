@@ -129,6 +129,8 @@ ai-sshclient run --max-output 0 web1 cat big.log   # disable the output cap
 ai-sshclient upload web1 ./app.tar.gz /tmp/app.tar.gz
 ai-sshclient download web1 /var/log/syslog ./syslog
 ai-sshclient mcp                              # MCP server over stdio
+ai-sshclient update --check                   # is there a newer GitHub release?
+ai-sshclient update                           # download it, verify SHA256, replace this executable
 ```
 
 The exit code is the remote command's exit code (highest one when using `--tag`); 255
@@ -282,6 +284,8 @@ ai-sshclient run --max-output 0 web1 cat big.log   # desativa o limite de saída
 ai-sshclient upload web1 ./app.tar.gz /tmp/app.tar.gz
 ai-sshclient download web1 /var/log/syslog ./syslog
 ai-sshclient mcp                              # servidor MCP via stdio
+ai-sshclient update --check                   # há uma release mais nova no GitHub?
+ai-sshclient update                           # baixa, confere o SHA256 e substitui este executável
 ```
 
 O código de saída é o do comando remoto (o maior deles ao usar `--tag`); 255 para erros de
