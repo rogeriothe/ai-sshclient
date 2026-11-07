@@ -208,20 +208,24 @@ async fn authenticate(
     }
 
     // No explicit credential: fall back to ssh-agent, then default ~/.ssh keys.
-    if let Ok(mut agent) = russh::keys::agent::client::AgentClient::connect_env().await
-        && let Ok(identities) = agent.request_identities().await {
-            for identity in identities {
-                if let russh::keys::agent::AgentIdentity::PublicKey { key, .. } = identity {
-                    let hash_alg = rsa_hash(handle).await?;
-                    if let Ok(res) = handle
-                        .authenticate_publickey_with(server.user.clone(), key, hash_alg, &mut agent)
-                        .await
-                        && res.success() {
-                            return Ok(());
-                        }
+    // ssh-agent via SSH_AUTH_SOCK is Unix-only (russh has no connect_env on Windows).
+    #[cfg(unix)]
+    {
+        if let Ok(mut agent) = russh::keys::agent::client::AgentClient::connect_env().await
+            && let Ok(identities) = agent.request_identities().await {
+                for identity in identities {
+                    if let russh::keys::agent::AgentIdentity::PublicKey { key, .. } = identity {
+                        let hash_alg = rsa_hash(handle).await?;
+                        if let Ok(res) = handle
+                            .authenticate_publickey_with(server.user.clone(), key, hash_alg, &mut agent)
+                            .await
+                            && res.success() {
+                                return Ok(());
+                            }
+                    }
                 }
             }
-        }
+    }
 
     for name in ["id_ed25519", "id_ecdsa", "id_rsa"] {
         let Some(home) = dirs::home_dir() else {
